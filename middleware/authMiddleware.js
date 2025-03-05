@@ -2,7 +2,7 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 function verifyToken(req, res, next) {
-  let token = req.headers["authorization"] || req.cookies?.token;
+  let token = req.headers["authorization"] || req.headers["Authorization"] || req.cookies?.token;
 
   if (!token) {
     return res.status(401).json({ message: "Authentication token is missing" });
