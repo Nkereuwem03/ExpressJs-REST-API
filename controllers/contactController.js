@@ -11,7 +11,8 @@ const getContact = asyncHandler(async (req, res) => {
   if (!id) {
     res.status(400).json({ message: "Id is required" });
   }
-  const contact = await Contact.findById({ _id: id, user_Id: req.user.id });
+  // const contact = await Contact.findById({ _id: id, user_Id: req.user.id });
+  const contact = await Contact.findById({ _id: id });
   if (!contact) {
     res.status(404);
     throw new Error("Contact not found");
@@ -57,7 +58,7 @@ const updateContact = asyncHandler(async (req, res) => {
     req.body,
     { new: true }
   );
-  res.status(201).json(updatedContact);
+  res.status(201).json({ message: "Contact updated successfully", updatedContact });
 });
 
 const deleteContact = asyncHandler(async (req, res) => {

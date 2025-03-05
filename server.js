@@ -16,7 +16,7 @@ app.use("/api/users", require("./routes/userRoutes"));
 app.use(cookieParser());
 app.use(
   cors({
-    origin: "localhost:5000",
+    origin: "http://localhost:5000",
     credentials: true,
   })
 );
