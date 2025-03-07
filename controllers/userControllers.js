@@ -4,16 +4,24 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const client = require("../config/redis");
 
-const generateAccessToken = (user) => {
-  return jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
-    expiresIn: "1d",
-  });
-};
-
-const generateRefreshToken = (user) => {
-  return jwt.sign({ id: user._id }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: "7d",
-  });
+const generateTokens = (user) => {
+  const accessToken = jwt.sign(
+    { id: user._id, role: user.role },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: "15m",
+    }
+  );
+  const refreshToken = jwt.sign(
+    { id: user._id },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: "7d" }
+  );
+  return {
+    accessToken,
+    refreshToken,
+    refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  };
 };
 
 const registerUser = asyncHandler(async (req, res) => {
@@ -60,16 +68,18 @@ const loginUser = asyncHandler(async (req, res) => {
     return res.status(401).json({ message: "Invalid credentials" });
   }
 
-  const accessToken = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
+  const { accessToken, refreshToken, refreshTokenExpiresAt } =
+    generateTokens(user);
 
   user.refreshToken = refreshToken;
+  user.refreshTokenExpiresAt = refreshTokenExpiresAt;
   await user.save();
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "Strict",
+    sameSite: "None",
+    // sameSite: "Strict",
     maxAge: 7 * 24 * 60 * 60,
     path: "/",
   });
@@ -86,15 +96,24 @@ const loginUser = asyncHandler(async (req, res) => {
 });
 
 const refreshToken = asyncHandler(async (req, res) => {
-  const refreshToken = req.cookies.refreshToken;
+  const oldRefreshToken = req.cookies?.refreshToken;
 
-  if (!refreshToken) {
+  if (!oldRefreshToken) {
     return res.status(401).json({ message: "Refresh token missing" });
   }
 
-  const blacklisted = await client.get(refreshToken);
-  if (blacklisted) {
+  const isBlacklisted = await client.get(oldRefreshToken);
+  if (isBlacklisted) {
     return res.status(403).json({ error: "Token is blacklisted" });
+  }
+
+  const user = await User.findOne({ refreshToken: oldRefreshToken });
+  if (!user) return res.sendStatus(403);
+
+  if (user.refreshTokenExpiresAt < new Date()) {
+    return res
+      .status(403)
+      .json({ message: "Refresh token expired. Please log in again." });
   }
 
   jwt.verify(
@@ -105,13 +124,9 @@ const refreshToken = asyncHandler(async (req, res) => {
         return res.status(403).json({ message: "Invalid refresh token" });
       }
 
-      const user = await User.findById(decoded.id);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
+      const { newAccessToken, newRefreshToken } = generateTokens(user);
 
-      const newAccessToken = generateAccessToken(user);
-      const newRefreshToken = generateRefreshToken(user);
+      await client.set(oldRefreshToken, "blacklisted", "EX", 7 * 24 * 60 * 60);
 
       user.refreshToken = newRefreshToken;
       await user.save();
@@ -119,7 +134,8 @@ const refreshToken = asyncHandler(async (req, res) => {
       res.cookie("refreshToken", newRefreshToken, {
         httpOnly: true,
         secure: false,
-        sameSite: "strict",
+        sameSite: "None",
+        // sameSite: "strict",
         maxAge: 7 * 24 * 60 * 60,
         path: "/",
       });
@@ -130,17 +146,27 @@ const refreshToken = asyncHandler(async (req, res) => {
 });
 
 const logoutUser = asyncHandler(async (req, res) => {
-  const refreshToken = req.cookies.refreshToken;
+  const refreshToken = req.cookies?.refreshToken;
   if (!refreshToken) return res.sendStatus(204);
 
   const user = await User.findOne({ refreshToken });
   if (!user) return res.sendStatus(204);
 
-  await client.set(refreshToken, "blacklisted", "EX", 7 * 24 * 60 * 60);
+  try {
+    await client.set(refreshToken, "blacklisted", "EX", 7 * 24 * 60 * 60);
+  } catch (error) {
+        console.error("Redis error:", error.message);
+  }
+
   user.refreshToken = null;
   await user.save();
 
-  res.clearCookie("refreshToken", { path: "/" });
+  res.clearCookie("refreshToken", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "None",
+    path: "/",
+  });
   res.status(200).json({ message: "Logged out successfully" });
 });
 

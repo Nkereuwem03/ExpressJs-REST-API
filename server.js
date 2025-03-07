@@ -17,10 +17,13 @@ app.use(cookieParser());
 app.use(
   cors({
     origin: "http://localhost:5000",
-    credentials: true,
+    credentials: true, 
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 app.use(errorHandler);
+// app.set("trust proxy", 1);
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
